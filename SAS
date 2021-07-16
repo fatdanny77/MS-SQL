@@ -1,0 +1,173 @@
+proc sql;
+create table demand as
+select
+INTERNAL_ID,
+"報表分類"n,
+"分類4"n
+from PLANCODE
+where "報表分類"n in ("儲蓄型"  "保障型") 
+;
+quit;
+
+
+/*找出所有保障型、儲蓄型商品*/
+proc sql;
+create table tradition as 
+select 
+	a.TCM_POLICY_CODE,
+	a.TCP_INTERNAL_ID,
+	a.TBI_ENTRY_AGE,
+	a.TCP_VALIDATE_DATE,
+	a.TCM_MONEY_CODE,
+	a.TSC_SALES_CHANNEL_NAME,
+	demand."報表分類"n,
+	demand."分類4"n
+from FAD.T_ACT_001_01 as a
+right join demand
+on a.TCP_INTERNAL_ID = demand.INTERNAL_ID
+where 
+	/*a.TCM_LIABILITY_STATE=1 and */
+	a.TCP_ITEM_ORDER = 1 and
+	a.TSC_SALES_CHANNEL_NAME in ("AGY"  "STD") and
+	input(a.TCP_VALIDATE_DATE, 8.) >= 20180101 and input(a.TCP_VALIDATE_DATE, 8.) <= 20210631 ;
+;
+quit;
+
+proc freq data =  tradition;
+table TSC_SALES_CHANNEL_NAME;
+run;
+
+/*篩選區間*/
+/*
+data tradition;
+set tradition;
+TCP_VALIDATE_DATE_num = input(TCP_VALIDATE_DATE, 8.);
+if TCP_VALIDATE_DATE_num < 20180101 or TCP_VALIDATE_DATE_num > 20210631 then delete;
+run;
+*/
+
+/*檢查是否有重複*/
+proc sql;
+select
+count(TCM_POLICY_CODE),
+count(distinct TCM_POLICY_CODE) 
+from tradition;
+quit;
+
+/*產生年齡區間*/
+proc sql;
+create table tradition_age as
+select  
+	TCM_POLICY_CODE,
+	TCP_INTERNAL_ID,
+	TBI_ENTRY_AGE,
+	TCM_MONEY_CODE,
+	"報表分類"n,
+	"分類4"n,
+	case  
+	when 0 <= TBI_ENTRY_AGE and TBI_ENTRY_AGE <= 10 then "0-10" 
+	when 11 <= TBI_ENTRY_AGE and TBI_ENTRY_AGE <= 20 then "11-20" 
+	when 21 <= TBI_ENTRY_AGE and TBI_ENTRY_AGE <= 30 then "21-30" 
+	when 31 <= TBI_ENTRY_AGE and TBI_ENTRY_AGE <= 40 then "31-40" 
+	when 41 <= TBI_ENTRY_AGE and TBI_ENTRY_AGE <= 50 then "41-50" 
+	when 51 <= TBI_ENTRY_AGE and TBI_ENTRY_AGE <= 60 then "51-60" 
+	when 61 <= TBI_ENTRY_AGE then "60+" end
+	as "年齡區間"n,
+	case 
+	when "報表分類"n = "儲蓄型" then "儲蓄型" 
+	when "報表分類"n = "保障型" and TCP_INTERNAL_ID ^= "QWX" and	"分類4"n = "死亡保險" then"保障型死亡" 
+	else "其他" end
+	as "分類"n
+from  tradition;
+quit;
+
+
+data tradition_age;
+set tradition_age;
+where "分類"n ^= "其他" ;
+run;
+
+proc freq data =  tradition_age;
+tables "分類"n*"年齡區間"n*TCM_MONEY_CODE;
+run;
+
+/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/*/;
+/*Peter*/
+
+proc sql;
+create table STD as 
+select
+	TCM_POLICY_CODE,
+	TCP_ITEM_ORDER,
+	TCP_INTERNAL_ID,
+	TCM_VALIDATE_DATE,
+	input(substr(TCM_VALIDATE_DATE,1,6), 10.0) as yyyymm,
+	TBI_ENTRY_AGE,
+	case 
+		when 0<=TBI_ENTRY_AGE<=10 then "0~10"
+		when 11<=TBI_ENTRY_AGE<=20 then "11~20"
+		when 21<=TBI_ENTRY_AGE<=30 then "21~30"
+		when 31<=TBI_ENTRY_AGE<=40 then "31~40"
+		when 41<=TBI_ENTRY_AGE<=50 then "41~50"
+		when 51<=TBI_ENTRY_AGE<=60 then "51~60"
+		when 61<=TBI_ENTRY_AGE then "61+"
+	end as "年齡區間"n
+from FAD.T_ACT_001_01
+where TCP_ITEM_ORDER=1 and TSC_SALES_CHANNEL_NAME="STD" and 201800 <= input(substr(TCM_VALIDATE_DATE,1,6), 10.0) <= 202106
+order by TCM_POLICY_CODE
+;
+quit;
+
+data STD1;
+set  STD;
+by TCM_POLICY_CODE;
+if first.TCM_POLICY_CODE;
+run;
+
+
+
+proc sql;
+create table STD2 as 
+select 
+	a.*, 
+	case when TCP_INTERNAL_ID="AXALI" then "儲蓄型" else b."報表分類"n end as "報表分類"n,
+	"PRM分類"n,
+	"分類5"n as "幣別"n
+from 
+	STD1 as a
+	left join 
+	MAPP.PLANCODE as b
+	on a.TCP_INTERNAL_ID=b.INTERNAL_ID
+;
+quit;
+
+data STD3;
+set  STD2;
+if TCP_INTERNAL_ID^="QWX";
+if "PRM分類"n="保障型-死亡險" then "分類"n="保障型死亡險(不含QWX)";
+else if "報表分類"n="儲蓄型" then "分類"n="儲蓄型";
+else delete;
+run;
+
+
+
+proc sql;
+create table STD4 as 
+select 
+	"分類"n,
+	"幣別"n,
+	"年齡區間"n,
+	count(distinct TCM_POLICY_CODE) as "保單數"n
+from STD3
+group by
+	"分類"n,
+	"幣別"n,
+	"年齡區間"n
+order by
+	"分類"n,
+	"幣別"n,
+	"年齡區間"n
+;
+quit;
+
+
